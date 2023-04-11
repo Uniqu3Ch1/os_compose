@@ -20,36 +20,34 @@ auth_args = {
 # 定义创建 VM 的函数
 def create_vm(conn, name, image, flavor, net_id, ip_address):
     """根据传入的name、image、flavor、subnet_id、ip地址创建VM"""
+    try:
+        # 获取镜像和配额对象
+        image_obj = conn.compute.find_image(image)
+        flavor_obj = conn.compute.find_flavor(flavor)
 
-    # 连接 OpenStack
-    connection = openstack.connect(**auth_args)
+        # 创建 VM
+        server = conn.compute.create_server(
+            name=name,
+            image_id=image_obj.id,
+            flavor_id=flavor_obj.id,
+            networks=[{"uuid": net_id, "fixed_ip": ip_address}],
+        )
 
-    # 获取镜像和配额对象
-    image_obj = connection.compute.find_image(image)
-    flavor_obj = connection.compute.find_flavor(flavor)
+        # 等待 VM 启动并获取 IP 地址
+        server = conn.compute.wait_for_server(server)
+        network = conn.network.find_network(name_or_id=net_id)
+        ip_address = server.addresses[network.name][0]["addr"]
 
-    # 创建 VM
-    server = connection.compute.create_server(
-        name=name,
-        image_id=image_obj.id,
-        flavor_id=flavor_obj.id,
-        networks=[{"uuid": net_id, "fixed_ip": ip_address}],
-    )
-
-    # 等待 VM 启动并获取 IP 地址
-    server = conn.compute.wait_for_server(server)
-    network = conn.network.find_network(name_or_id=net_id)
-    ip_address = server.addresses[network.name][0]["addr"]
-
-    # 打印 VM IP 地址
-    print(f"Created VM {name} with IP address {ip_address}")
-
+        # 打印 VM IP 地址
+        print(f"Created VM {name} with IP address {ip_address}")
+    except openstack.exceptions.BadRequestException as e:
+        print(e)
 
 
-def create_subnet(network, cidr_prefix, gw_ip, dhcp_ip_range):
+def create_subnet(conn, network, cidr_prefix, gw_ip, dhcp_ip_range):
     """定义创建 Subnet 的函数，将需要动态计算 CIDR 的变量作为参数传递"""
     # 连接 OpenStack
-    conn = openstack.connect(**auth_args)
+
 
     # 设定 DHCP IP 地址的数量，这里给出的是 10.0.0.2~10.0.0.254 地址池大小
     dhcp_ips = len(netaddr.IPNetwork(dhcp_ip_range)) - 1
@@ -87,7 +85,8 @@ def find_subnet(connection, cidr):
     """根据传入的cidr在当前项目中查找subnet, 如果找不到就抛出NotFoundException"""
 
     subnets = connection.network.subnets(project_id=connection.session.get_project_id())
-    for _subnet in subnets:
+    subnet_list = list(subnets)
+    for _subnet in subnet_list:
         if _subnet.cidr == cidr:
             return _subnet
     raise openstack.exceptions.NotFoundException
@@ -99,12 +98,14 @@ def main():
     with open("vm-config.yaml", "r", encoding="utf8") as yaml_config:
         vm_configs = yaml.safe_load(yaml_config)
 
+    project_name = vm_configs['project']['name']
     # 连接 OpenStack，创建一个空 subnet_id 列表以存储创建的子网 ID
-    connection = openstack.connect(**auth_args)
+    admin_connection = openstack.connect(**auth_args)
+    connection, project = create_project(admin_connection, project_name)
     subnet_ids = []
 
     # 处理所有配置
-    for config in vm_configs:
+    for config in vm_configs['project']['vm']:
         # 获取 IP 地址和掩码
         ip_net = netaddr.IPNetwork(config["ip_addr"])
         cidr_prefix = str(ip_net.cidr)
@@ -123,7 +124,7 @@ def main():
                     f'{netaddr.IPAddress(ip_net.first + 2)}/{ip_net.prefixlen}'
                     )
             )
-            subnet = create_subnet(network, cidr_prefix, gw_ip, dhcp_ip_range)
+            subnet = create_subnet(connection, network, cidr_prefix, gw_ip, dhcp_ip_range)
 
 
         subnet_id = subnet.id
@@ -147,6 +148,34 @@ def clean_subnets(conn, subnet_ids):
 
     for subnet_id in subnet_ids:
         conn.network.delete_subnet(subnet_id)
+
+def create_project(connection, project_name=None):
+    """创建指定project, 并将当前用户加入project"""
+    try:
+        project = connection.identity.create_project(name=project_name)
+        admin = connection.identity.find_user(name_or_id=auth_args["username"])
+        admin_role = connection.identity.find_role('admin')
+        # 将当前用户加入新创建的project
+        connection.identity.assign_project_role_to_user(project, admin, admin_role)
+
+    except openstack.exceptions.ConflictException:
+        print(f"{project_name} is exist! not create...")
+        project = connection.identity.find_project(name_or_id=project_name)
+
+
+    new_auth_args = auth_args.copy()
+    new_auth_args['project_name'] = project_name
+    new_auth_args['project_id'] = project.id
+    new_conn = openstack.connect(**new_auth_args)
+
+    return new_conn, project
+
+
+
+def delete_project(connection, project_id):
+    """删除project"""
+    connection.identity.delete_project(project_id)
+
 
 if __name__ == '__main__':
     main()
