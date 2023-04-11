@@ -2,10 +2,18 @@ project:
   name: test_proj
   vm:
   - name: vm-1
-    image: Centos7-test-2003
+    image: YJ-Struts2-052-RCE
     flavor: yj.2_2_80
-    ip_addr: 192.168.1.101/24
+    net: net1
   - name: vm-2
-    image: Centos7-test-2003
+    image: YJ-Struts2-052-RCE
     flavor: yj.2_2_80
-    ip_addr: 192.168.1.102/24
+    net: net2
+
+  nets:
+    net1: 
+      ip_addr: 192.168.1.101/24
+      connect: net2
+    net2: 
+      ip_addr: 192.168.2.102/24
+      connect: net1

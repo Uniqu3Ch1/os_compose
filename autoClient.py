@@ -39,7 +39,7 @@ def create_vm(conn, name, image, flavor, net_id, ip_address):
         ip_address = server.addresses[network.name][0]["addr"]
 
         # 打印 VM IP 地址
-        print(f"Created VM {name} with IP address {ip_address}")
+        print(f"Created VM {name} with IP address {ip_address} and password: {server.admin_password}")
     except openstack.exceptions.BadRequestException as e:
         print(e)
 
@@ -91,56 +91,15 @@ def find_subnet(connection, cidr):
             return _subnet
     raise openstack.exceptions.NotFoundException
 
-
-def main():
-    """读取 YAML 配置文件并创建 VM"""
-
-    with open("vm-config.yaml", "r", encoding="utf8") as yaml_config:
-        vm_configs = yaml.safe_load(yaml_config)
-
-    project_name = vm_configs['project']['name']
-    # 连接 OpenStack，创建一个空 subnet_id 列表以存储创建的子网 ID
-    admin_connection = openstack.connect(**auth_args)
-    connection, project = create_project(admin_connection, project_name)
-    subnet_ids = []
-
-    # 处理所有配置
-    for config in vm_configs['project']['vm']:
-        # 获取 IP 地址和掩码
-        ip_net = netaddr.IPNetwork(config["ip_addr"])
-        cidr_prefix = str(ip_net.cidr)
-
-        # 检查子网是否存在，如果不存在则创建
-        try:
-            subnet = find_subnet(connection, cidr_prefix)
-        except openstack.exceptions.NotFoundException:
-            network_name = f"auto-created-network-{cidr_prefix}"
-            network = connection.network.create_network(name=network_name)
-
-            gw_ip = str(netaddr.IPAddress(ip_net.first + 254))
-
-            dhcp_ip_range = str(
-                netaddr.IPNetwork(
-                    f'{netaddr.IPAddress(ip_net.first + 2)}/{ip_net.prefixlen}'
-                    )
-            )
-            subnet = create_subnet(connection, network, cidr_prefix, gw_ip, dhcp_ip_range)
-
-
-        subnet_id = subnet.id
-
-        # 将子网 ID 添加到 subnet_ids 列表中
-        subnet_ids.append(subnet_id)
-
-        # 创建 VM
-        create_vm(
-            conn=connection,
-            name=config["name"],
-            image=config["image"],
-            flavor=config["flavor"],
-            net_id=subnet.network_id,
-            ip_address=str(ip_net.ip),
-        )
+def create_router(connection, subnets):
+    """创建路由，连接指定子网"""
+    router_name = 'auto-created-router'
+    router = connection.network.create_router(name=router_name)
+    print(f"Created router '{router.name}' with ID '{router.id}'")
+    for subnet in subnets:
+        connection.network.add_interface_to_router(router, subnet_id=subnet.id)
+        print(f"Connected subnet '{subnet.name}' with ID '{subnet.id}' to router '{router.name}'")
+    return router
 
 
 def clean_subnets(conn, subnet_ids):
@@ -175,6 +134,77 @@ def create_project(connection, project_name=None):
 def delete_project(connection, project_id):
     """删除project"""
     connection.identity.delete_project(project_id)
+
+
+
+def main():
+    """读取 YAML 配置文件并创建 VM"""
+
+    with open("vm-config.yaml", "r", encoding="utf8") as yaml_config:
+        vm_configs = yaml.safe_load(yaml_config)
+
+    project_name = vm_configs['project']['name']
+    # 连接 OpenStack，创建一个空 subnet_id 列表以存储创建的子网 ID
+    admin_connection = openstack.connect(**auth_args)
+    subnets = {}
+    # 可互通网络列表
+    interoperable = []
+
+    # 创建指定项目，并返回新项目的连接对象
+    connection, project = create_project(admin_connection, project_name)
+    
+    # 从配置文件中读取网络信息
+    network_config = vm_configs['project']['nets']
+
+    # 处理虚拟机配置
+    for config in vm_configs['project']['vm']:
+
+        # 处理虚拟机网络配置
+        vmnet = config['net']
+        # 获取 IP 地址和掩码
+        ip_net = netaddr.IPNetwork(network_config[vmnet]["ip_addr"])
+        cidr_prefix = str(ip_net.cidr)
+
+        # 检查子网是否存在，如果不存在则创建
+        try:
+            subnet = find_subnet(connection, cidr_prefix)
+        except openstack.exceptions.NotFoundException:
+            network_name = f"auto-created-network-{cidr_prefix}"
+            network = connection.network.create_network(name=network_name)
+
+            gw_ip = str(netaddr.IPAddress(ip_net.first + 254))
+
+            dhcp_ip_range = str(
+                netaddr.IPNetwork(
+                    f'{netaddr.IPAddress(ip_net.first + 2)}/{ip_net.prefixlen}'
+                    )
+            )
+            subnet = create_subnet(
+                connection, network, cidr_prefix, gw_ip, dhcp_ip_range
+                )
+
+
+
+        # 将子网对象添加到 subnets 列表中
+        subnets[str(ip_net)] = subnet
+
+        # 2.创建 VM
+        create_vm(
+            conn=connection,
+            name=config["name"],
+            image=config["image"],
+            flavor=config["flavor"],
+            net_id=subnet.network_id,
+            ip_address=str(ip_net.ip),
+        )
+    for net_name in network_config.keys():
+        net = network_config[net_name]
+        if 'connect' in net.keys():
+            ipaddr = net['ip_addr']
+            interoperable.append(subnets[ipaddr])
+
+    create_router(connection, interoperable)
+
 
 
 if __name__ == '__main__':
