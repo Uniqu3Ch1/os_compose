@@ -18,7 +18,7 @@ auth_args = {
 
 
 # 定义创建 VM 的函数
-def create_vm(conn, name, image, flavor, net_id, ip_address):
+def create_vm(conn, name, image, flavor, networks):
     """根据传入的name、image、flavor、subnet_id、ip地址创建VM"""
     try:
         # 获取镜像和配额对象
@@ -30,18 +30,42 @@ def create_vm(conn, name, image, flavor, net_id, ip_address):
             name=name,
             image_id=image_obj.id,
             flavor_id=flavor_obj.id,
-            networks=[{"uuid": net_id, "fixed_ip": ip_address}],
+            networks=networks,
+            #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
         )
 
         # 等待 VM 启动并获取 IP 地址
         server = conn.compute.wait_for_server(server)
-        network = conn.network.find_network(name_or_id=net_id)
-        ip_address = server.addresses[network.name][0]["addr"]
+        #network = conn.network.find_network(name_or_id=net_id)
+        ip_address = server.addresses
 
         # 打印 VM IP 地址
         print(f"Created VM {name} with IP address {ip_address} and password: {server.admin_password}")
-    except openstack.exceptions.BadRequestException as e:
-        print(e)
+    except openstack.exceptions.BadRequestException as error:
+        print(error)
+        # 获取镜像和配额对象
+        image_obj = conn.compute.find_image(image)
+        flavor_obj = conn.compute.find_flavor(flavor)
+        # 删除指定的ip地址
+        for dic in networks:
+            dic.pop('fixed_ip')
+
+        # 创建 VM
+        server = conn.compute.create_server(
+            name=name,
+            image_id=image_obj.id,
+            flavor_id=flavor_obj.id,
+            networks=networks,
+            #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
+        )
+
+        # 等待 VM 启动并获取 IP 地址
+        server = conn.compute.wait_for_server(server)
+        #network = conn.network.find_network(name_or_id=net_id)
+        ip_address = server.addresses
+
+        # 打印 VM IP 地址
+        print(f"Created VM {name} with IP address {ip_address} and password: {server.admin_password}")
 
 
 def create_subnet(conn, network, cidr_prefix, gw_ip, dhcp_ip_range):
@@ -91,10 +115,14 @@ def find_subnet(connection, cidr):
             return _subnet
     raise openstack.exceptions.NotFoundException
 
-def create_router(connection, subnets):
+def create_router(connection, subnets, external_network_name=None):
     """创建路由，连接指定子网"""
     router_name = 'auto-created-router'
-    router = connection.network.create_router(name=router_name)
+    if external_network_name != None:
+        external_network = connection.network.find_network(external_network_name)
+        router = connection.network.create_router(name=router_name, external_gateway_info={'network_id': external_network.id})
+    else:
+        router = connection.network.create_router(name=router_name)
     print(f"Created router '{router.name}' with ID '{router.id}'")
     for subnet in subnets:
         connection.network.add_interface_to_router(router, subnet_id=subnet.id)
@@ -158,35 +186,39 @@ def main():
 
     # 处理虚拟机配置
     for config in vm_configs['project']['vm']:
-
+        networks = []
         # 处理虚拟机网络配置
-        vmnet = config['net']
-        # 获取 IP 地址和掩码
-        ip_net = netaddr.IPNetwork(network_config[vmnet]["ip_addr"])
-        cidr_prefix = str(ip_net.cidr)
+        vmnet_list = [net_name for net_name in config['net']]
 
-        # 检查子网是否存在，如果不存在则创建
-        try:
-            subnet = find_subnet(connection, cidr_prefix)
-        except openstack.exceptions.NotFoundException:
-            network_name = f"auto-created-network-{cidr_prefix}"
-            network = connection.network.create_network(name=network_name)
+        # 遍历配置文件中的net列表，获取 IP 地址和掩码
+        for vmnet in vmnet_list:
+            ip_net = netaddr.IPNetwork(network_config[vmnet]["ip_addr"])
+    
+            cidr_prefix = str(ip_net.cidr)
 
-            gw_ip = str(netaddr.IPAddress(ip_net.first + 254))
+            # 检查子网是否存在，如果不存在则创建
+            try:
+                subnet = find_subnet(connection, cidr_prefix)
+            except openstack.exceptions.NotFoundException:
+                network_name = f"auto-created-network-{cidr_prefix}"
+                network = connection.network.create_network(name=network_name)
 
-            dhcp_ip_range = str(
-                netaddr.IPNetwork(
-                    f'{netaddr.IPAddress(ip_net.first + 2)}/{ip_net.prefixlen}'
-                    )
-            )
-            subnet = create_subnet(
-                connection, network, cidr_prefix, gw_ip, dhcp_ip_range
+                gw_ip = str(netaddr.IPAddress(ip_net.first + 254))
+
+                dhcp_ip_range = str(
+                    netaddr.IPNetwork(
+                        f'{netaddr.IPAddress(ip_net.first + 2)}/{ip_net.prefixlen}'
+                        )
                 )
+                subnet = create_subnet(
+                    connection, network, cidr_prefix, gw_ip, dhcp_ip_range
+                    )
 
+            # 将子网对象添加到 subnets 列表中
+            subnets[str(ip_net)] = subnet
+            networks.append({"uuid": subnet.network_id, "fixed_ip": ip_net.ip})
 
-
-        # 将子网对象添加到 subnets 列表中
-        subnets[str(ip_net)] = subnet
+            
 
         # 2.创建 VM
         create_vm(
@@ -194,16 +226,17 @@ def main():
             name=config["name"],
             image=config["image"],
             flavor=config["flavor"],
-            net_id=subnet.network_id,
-            ip_address=str(ip_net.ip),
+            networks=networks
         )
+
+    # 3.根据网络配置创建路由
     for net_name in network_config.keys():
         net = network_config[net_name]
         if 'connect' in net.keys():
             ipaddr = net['ip_addr']
             interoperable.append(subnets[ipaddr])
 
-    create_router(connection, interoperable)
+    create_router(connection, interoperable,'provider')
 
 
 
