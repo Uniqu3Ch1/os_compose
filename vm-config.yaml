@@ -4,16 +4,31 @@ project:
   - name: vm-1
     image: YJ-Struts2-052-RCE
     flavor: yj.2_2_80
-    net: net1
+    net: 
+    - net1
+    - net3
   - name: vm-2
     image: YJ-Struts2-052-RCE
     flavor: yj.2_2_80
-    net: net2
+    net: 
+    - net2
+  - name: vm-3
+    image: YJ-Struts2-052-RCE
+    flavor: yj.2_2_80
+    net:
+    - net3
+    - net4
 
   nets:
     net1: 
-      ip_addr: 192.168.1.101/24
       connect: net2
+      ip_addr: 192.168.1.101/24
     net2: 
-      ip_addr: 192.168.2.102/24
       connect: net1
+      ip_addr: 192.168.2.102/24
+    net3:
+      ip_addr: 192.168.3.105/24
+    net4:
+      connect: net3
+      ip_addr: 192.168.4.131/24
+      
