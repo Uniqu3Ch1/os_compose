@@ -1,48 +1,35 @@
 project:
-  name: test_project
+  name: test_proj
   vm:
   - name: vm-1
     image: tests-WEB2-Weblogic_RCE
     flavor: 2m4g80
-    net: 
-    - net2
-    - net3
+    ip_address: 
+    - 172.26.4.54/24
+    - 172.26.3.27/24
+    float_ip: 172.26.4.54
   - name: kali-attacker
     image: YJ-kali-linux-2020.1-live-amd64
     flavor: 2m4g
-    net:
-    - net1
+    ip_address:
+    - 172.26.2.35/24
+    float_ip: 172.26.2.35
   - name: vm-2
     image: YJ-Struts2-052-RCE
     flavor: 2m4g80
-    net: 
-    - net2
+    ip_address:
+    - 172.26.3.75/24
   - name: vm-3
-    image: YJ-Struts2-052-RCE
-    flavor: yj.2_2_80
-    net:
-    - net3
-    - net4
-  - name: vm-4
     image: YJ-ThinkCMF-FileInclude
     flavor: 2m4g80
-    net:
-    - net3
-  - name: vm-5
+    ip_address: 
+    - 172.26.4.22/24
+  - name: vm-4
     image: YJ-Thinkphp5.1~5.2_RCE
     flavor: 2m4g80
-    net:
-    - net1
-    - net2
+    ip_address:
+    - 172.26.3.23/24
+    - 172.26.2.182/24
 
-  nets:
-    net1: 
-      connect: net2
-      ip_addr: 172.26.2.35/24
-    net2: 
-      connect: net1
-      ip_addr: 172.26.3.27/24
-    net3:
-      ip_addr: 172.26.4.22/24
 
       
