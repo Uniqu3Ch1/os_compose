@@ -2,10 +2,8 @@
 读取 YAML 配置文件并创建 VM
 """
 import os
-import time
 import netaddr
 import openstack
-import yaml
 from libs.config import Config
 
 
@@ -112,10 +110,10 @@ def create_router(connection, subnets, external_network_name=None):
             )
     else:
         router = connection.network.create_router(name=router_name)
-    print(f"Created router '{router.name}' with ID '{router.id}'")
+    print(f"路由 {router.name} 创建完成, ID为: '{router.id}'")
     for subnet in subnets:
         connection.network.add_interface_to_router(router, subnet_id=subnet.id)
-        print(f"Connected subnet '{subnet.name}' with ID '{subnet.id}' to router '{router.name}'")
+        print(f"连接子网 {subnet.name} 到路由 {router.name} ")
     return router
 
 
@@ -136,7 +134,7 @@ def create_project(connection, project_name=None):
         connection.identity.assign_project_role_to_user(project, admin, admin_role)
 
     except openstack.exceptions.ConflictException:
-        print(f"{project_name} is exist! not create...")
+        print(f"{project_name} 已存在! 跳过创建...")
         project = connection.identity.find_project(name_or_id=project_name)
 
 
@@ -183,6 +181,8 @@ def create_networks(connection, vm_config):
     return networks, subnets
 
 def add_float_ip(connection, server, ipaddr):
+    """根据配置信息找到需要绑定浮动ip的接口, 分配并绑定浮动ip"""
+    print(f'正在分配浮动ip 到 {server.name}')
     provider = connection.network.find_network(name_or_id='provider')
     floating_ip  = connection.network.create_ip(floating_network_id=provider.id)
     ports = connection.network.ports(device_id=server.id)
@@ -202,13 +202,11 @@ def main():
     admin_connection = openstack.connect(**auth_args)
     # 可互通网络列表
     interoperable = []
-    
     # 创建指定项目，并返回新项目的连接对象
     connection, project = create_project(admin_connection, project_name)
     # 处理虚拟机配置
     for vm_config in vm_list:
         # 处理虚拟机网络配置
-        
         networks, subnets = create_networks(connection,vm_config)
         # 2.创建 VM
         server = create_vm(
@@ -240,12 +238,12 @@ def wait_and_print(connection, vm_list):
             floatip = add_float_ip(connection, server, vm_config.float_ip_bind)
             ip_address = server.addresses
             vm_config.float_ip = floatip.floating_ip_address
-            print(f"Created VM {server.name} with IP address {ip_address}:\
-                {vm_config.float_ip} and password: {server.admin_password}")
+            ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
+            print(f"|{server.name}\t|\t{ip_list}:{vm_config.float_ip}\t|\t{server.admin_password}|")
         else:
             ip_address = server.addresses
-            print(f"Created VM {server.name} with IP address {ip_address}\
-                and password: {server.admin_password}")
+            ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
+            print(f"|{server.name}\t|\t{ip_list}\t|\t{server.admin_password}|")
 
 
 if __name__ == '__main__':

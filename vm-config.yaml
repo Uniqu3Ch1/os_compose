@@ -1,5 +1,5 @@
 project:
-  name: test_proj
+  name: test_project
   vm:
   - name: vm-1
     image: tests-WEB2-Weblogic_RCE
