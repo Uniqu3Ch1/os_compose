@@ -19,39 +19,41 @@ auth_args = {
 
 
 # 定义创建 VM 的函数
-def create_vm(conn, name, image, flavor, networks):
+def create_vm(conn, vm_cfg, networks):
     """根据传入的name、image、flavor、subnet_id、ip地址创建VM"""
     print('正在创建虚拟机...')
     try:
         # 获取镜像和配额对象
-        image_obj = conn.compute.find_image(image)
-        flavor_obj = conn.compute.find_flavor(flavor)
+        image_obj = conn.compute.find_image(vm_cfg.image)
+        flavor_obj = conn.compute.find_flavor(vm_cfg.flavor)
 
         # 创建 VM
         server = conn.compute.create_server(
-            name=name,
+            name=vm_cfg.name,
             image_id=image_obj.id,
             flavor_id=flavor_obj.id,
             networks=networks,
             #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
+            security_groups=[{'name': vm_cfg.sec_group[0].name}]
         )
     except openstack.exceptions.BadRequestException as err:
         #print('ip 地址重复, 尝试分配新ip...')
         print(err)
         # 获取镜像和配额对象
-        image_obj = conn.compute.find_image(image)
-        flavor_obj = conn.compute.find_flavor(flavor)
+        image_obj = conn.compute.find_image(vm_cfg.image)
+        flavor_obj = conn.compute.find_flavor(vm_cfg.flavor)
         # 删除指定的ip地址
         for dic in networks:
             dic.pop('fixed_ip')
 
         # 创建 VM
         server = conn.compute.create_server(
-            name=name,
+            name=vm_cfg.name,
             image_id=image_obj.id,
             flavor_id=flavor_obj.id,
             networks=networks,
             #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
+            security_groups=[{'name': vm_cfg.sec_group[0].name}]
         )
     except openstack.exceptions.ResourceTimeout:
         print("Created VM waiting timeout")
@@ -123,11 +125,11 @@ def clean_subnets(conn, subnet_ids):
     for subnet_id in subnet_ids:
         conn.network.delete_subnet(subnet_id)
 
-def create_project(connection, project_name=None):
+def create_project(connection, project_name=None, description=None):
     """创建指定project, 并将当前用户加入project"""
     print('正在创建项目...')
     try:
-        project = connection.identity.create_project(name=project_name)
+        project = connection.identity.create_project(name=project_name, description=description)
         admin = connection.identity.find_user(name_or_id=auth_args["username"])
         admin_role = connection.identity.find_role('admin')
         # 将当前用户加入新创建的project
@@ -192,10 +194,50 @@ def add_float_ip(connection, server, ipaddr):
             connection.network.update_ip(floating_ip, port_id=port.id)
     return floating_ip
 
+def create_secgroup(connection, vm_onfig):
+    """以默认配置创建安全组, 入站放通所有tcp端口"""
+    sec_group = connection.network.find_security_group(name_or_id='os_compose',
+        project_id=connection.session.get_project_id())
+    if sec_group is None:
+        sec_rule = {
+            'description': 'auto created security group rule by os_compose',
+            # 出站规则
+            'direction': 'ingress',
+            #: 可选项有 ``null``, ``tcp``, ``udp``, and ``icmp``.
+            'protocol': 'tcp',
+            #: The maximum port number in the range that is matched by the
+            #: security group rule. The port_range_min attribute constrains
+            #: the port_range_max attribute. If the protocol is ICMP, this
+            #: value must be an ICMP type.
+            'port_range_max': 65535,
+            #: The minimum port number in the range that is matched by the
+            #: security group rule. If the protocol is TCP or UDP, this value
+            #: must be less than or equal to the value of the port_range_max
+            #: attribute. If the protocol is ICMP, this value must be an ICMP type.
+            'port_range_min': 1,
+            'remote_ip_prefix': '0.0.0.0/0',
+        }
+        sec_group = connection.network.create_security_group(name='os_compose',
+            description='auto created security group')
+        #sec_rule['security_group_id'] = sec_group.id
+        connection.network.create_security_group_rule(
+            description=sec_rule['description'],
+            security_group_id=sec_group.id,
+            direction=sec_rule['direction'],
+            protocol=sec_rule['protocol'],
+            port_range_max=sec_rule['port_range_max'],
+            port_range_min=sec_rule['port_range_min'],
+            remote_ip_prefix=sec_rule['remote_ip_prefix'],
+            )
+    vm_onfig.sec_group.append(sec_group)
+    return sec_group
+
+
 def main():
     """读取 YAML 配置文件并创建 VM"""
     config = Config()
     project_name = config.project_name
+    project_description = config.project_description
     vm_list = config.parse_vm()
 
     # 连接 OpenStack，创建一个空 subnet_id 列表以存储创建的子网 ID
@@ -203,17 +245,17 @@ def main():
     # 可互通网络列表
     interoperable = []
     # 创建指定项目，并返回新项目的连接对象
-    connection, project = create_project(admin_connection, project_name)
+    connection, project = create_project(admin_connection, project_name, project_description)
     # 处理虚拟机配置
     for vm_config in vm_list:
         # 处理虚拟机网络配置
         networks, subnets = create_networks(connection,vm_config)
+        # 创建安全组和默认安全组规则
+        create_secgroup(connection, vm_config)
         # 2.创建 VM
         server = create_vm(
             conn=connection,
-            name=vm_config.name,
-            image=vm_config.image,
-            flavor=vm_config.flavor,
+            vm_cfg=vm_config,
             networks=networks
         )
         vm_config.update(server)

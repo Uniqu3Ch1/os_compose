@@ -1,5 +1,6 @@
 project:
   name: test_project
+  description: 测试项目
   vm:
   - name: vm-1
     image: tests-WEB2-Weblogic_RCE
