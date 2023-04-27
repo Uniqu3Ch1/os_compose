@@ -38,6 +38,8 @@ project:
     - 172.26.2.182/24
 
 ```
+安装依赖
+> pip install python-openstackclient==6.2.0
 
 构建项目
 ```
