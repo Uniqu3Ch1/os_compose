@@ -2,6 +2,7 @@
 读取 YAML 配置文件并创建 VM
 """
 import os
+import sys
 import netaddr
 import openstack
 from libs.config import Config
@@ -36,7 +37,7 @@ def create_vm(conn, vm_cfg, networks):
             #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
             security_groups=[{'name': vm_cfg.sec_group[0].name}]
         )
-    except openstack.exceptions.BadRequestException as err:
+    except openstack.exceptions.BadRequestException as err: # type: ignore
         #print('ip 地址重复, 尝试分配新ip...')
         print(err)
         # 获取镜像和配额对象
@@ -55,10 +56,20 @@ def create_vm(conn, vm_cfg, networks):
             #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
             security_groups=[{'name': vm_cfg.sec_group[0].name}]
         )
-    except openstack.exceptions.ResourceTimeout:
+    except openstack.exceptions.ResourceTimeout: # type: ignore
         print("Created VM waiting timeout")
 
     return server
+
+def delete_vm(conn, vm_cfg):
+    """删除已创建的虚拟机"""
+    servers = conn.compute.servers()
+    servers_dict = {server.name : server.id for server in servers}
+    if vm_cfg.name in servers_dict.keys():
+        conn.compute.delete_server(servers_dict[vm_cfg.name])
+        print(f'虚拟机实例 {vm_cfg.name} 删除成功')
+    else:
+        print(f'虚拟机实例 {vm_cfg.name} 不存在')
 
 def create_subnet(conn, network, cidr_prefix, gw_ip):
     """定义创建 Subnet 的函数，将需要动态计算 CIDR 的变量作为参数传递"""
@@ -89,17 +100,36 @@ def create_subnet(conn, network, cidr_prefix, gw_ip):
 
     return subnet
 
+def delete_route_network(conn):
+    """删除路由、网络和子网"""
+    print('正在删除路由...')
+    routers = list(conn.network.routers(project_id=conn.session.get_project_id()))
+    for port in conn.network.ports(device_id=routers[0].id):
+        if port.network_id == '9107647b-c57b-475a-832a-79d8306089cb':
+            continue
+        conn.network.remove_interface_from_router(routers[0].id, port_id=port.id)
+    conn.network.delete_router(routers[0])
+    print('正在删除子网...')
+    subnets = conn.network.subnets(project_id=conn.session.get_project_id())
+    for subnet in subnets:
+        conn.network.delete_subnet(subnet.id)
+    print('子网删除完成...\n正在删除网络...')
+
+    networks = conn.network.networks(project_id=conn.session.get_project_id())
+    for network in networks:
+        conn.network.delete_network(network.id)
+    print('网络删除完成! ')
+
 
 def find_net(connection, cidr):
     """根据传入的cidr在当前项目中查找subnet, 如果找不到就抛出NotFoundException"""
-
     subnets = connection.network.subnets(project_id=connection.session.get_project_id())
     subnet_list = list(subnets)
     for _subnet in subnet_list:
         if _subnet.cidr == cidr:
             network = connection.network.find_network(_subnet.network_id)
             return network, _subnet
-    raise openstack.exceptions.NotFoundException
+    raise openstack.exceptions.NotFoundException # type: ignore
 
 def create_router(connection, subnets, external_network_name=None):
     """创建路由，连接指定子网"""
@@ -119,11 +149,6 @@ def create_router(connection, subnets, external_network_name=None):
     return router
 
 
-def clean_subnets(conn, subnet_ids):
-    """删除创建的子网（仅为示例，生产环境中不建议删除子网）"""
-
-    for subnet_id in subnet_ids:
-        conn.network.delete_subnet(subnet_id)
 
 def create_project(connection, project_name=None, description=None):
     """创建指定project, 并将当前用户加入project"""
@@ -149,9 +174,9 @@ def create_project(connection, project_name=None, description=None):
 
 
 
-def delete_project(connection, project_id):
+def delete_project(connection, project):
     """删除project"""
-    connection.identity.delete_project(project_id)
+    connection.identity.delete_project(project)
 
 def create_networks(connection, vm_config):
     """根据网络配置创建网络及子网,并返回openstack网络配置"""
@@ -167,7 +192,7 @@ def create_networks(connection, vm_config):
         try:
             network, subnet = find_net(connection, cidr_prefix)
 
-        except openstack.exceptions.NotFoundException:
+        except openstack.exceptions.NotFoundException: # type: ignore
             network_name = f"auto-created-network-{cidr_prefix}"
             network = connection.network.create_network(name=network_name)
             # 计算网关ip
@@ -184,7 +209,7 @@ def create_networks(connection, vm_config):
 
 def add_float_ip(connection, server, ipaddr):
     """根据配置信息找到需要绑定浮动ip的接口, 分配并绑定浮动ip"""
-    print(f'正在分配浮动ip 到 {server.name}')
+    # print(f'正在分配浮动ip 到 {server.name}')
     provider = connection.network.find_network(name_or_id='provider')
     floating_ip  = connection.network.create_ip(floating_network_id=provider.id)
     ports = connection.network.ports(device_id=server.id)
@@ -233,7 +258,7 @@ def create_secgroup(connection, vm_onfig):
     return sec_group
 
 
-def main():
+def up():
     """读取 YAML 配置文件并创建 VM"""
     config = Config()
     project_name = config.project_name
@@ -275,19 +300,45 @@ def wait_and_print(connection, vm_list):
     """等待虚拟机创建完成, 根据配置绑定浮动ip, 并打印相关信息"""
     print('正在等待虚拟机创建完成...')
     for vm_config in vm_list:
-        server = connection.compute.wait_for_server(vm_config.server)
-        if hasattr(vm_config, 'have_float_ip'):
-            floatip = add_float_ip(connection, server, vm_config.float_ip_bind)
-            ip_address = server.addresses
-            vm_config.float_ip = floatip.floating_ip_address
-            ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
-            print(f"|{server.name}\t|\t{ip_list}:{vm_config.float_ip}\t|\t{server.admin_password}|")
-        else:
-            ip_address = server.addresses
-            ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
-            print(f"|{server.name}\t|\t{ip_list}\t|\t{server.admin_password}|")
+        try:
+            server = connection.compute.wait_for_server(vm_config.server)
+            if hasattr(vm_config, 'have_float_ip'):
+                floatip = add_float_ip(connection, server, vm_config.float_ip_bind)
+                ip_address = server.addresses
+                vm_config.float_ip = floatip.floating_ip_address
+                ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
+                print(f"|{server.name}\t|\t{ip_list}:{vm_config.float_ip}\t|\t{server.admin_password}|")
+            else:
+                ip_address = server.addresses
+                ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
+                print(f"|{server.name}\t|\t{ip_list}\t|\t{server.admin_password}|")
+        except openstack.exceptions.ResourceTimeout: # type: ignore
+            print(f'{vm_config.server.name} 等待超时! ')
+            continue
 
+def down():
+    """根据YAML配置文件清理项目"""
+    config = Config()
+    project_name = config.project_name
+    vm_list = config.parse_vm()
+
+    admin_connection = openstack.connect(**auth_args)
+    project = admin_connection.identity.find_project(name_or_id=project_name)
+    auth_args['project_name'] = project_name
+    auth_args['project_id'] = project.id
+    new_conn = openstack.connect(**auth_args)
+    for vm_cfg in vm_list:
+        delete_vm(new_conn, vm_cfg)
+
+    delete_route_network(new_conn)
+    delete_project(admin_connection, project)
+    print(f"项目 '{project_name}' 清理完成。")
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1] == 'up':
+        up()
+    elif sys.argv[1] == 'down':
+        down()
+    else:
+        print('无效参数，请重试')
     
