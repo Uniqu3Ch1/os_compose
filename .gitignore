@@ -3,3 +3,4 @@ venv/
 __pycache__
 *.ps1
 *.sh
+vm_cfgs
