@@ -4,6 +4,7 @@
 import os
 import sys
 import netaddr
+import argparse
 import openstack
 from libs.config import Config
 
@@ -81,7 +82,7 @@ def create_subnet(conn, network, cidr_prefix, gw_ip):
 
     # 计算 Subnet 网段和广播地址
     subnet_start = netaddr.IPAddress(cidr.network + 2)
-    subnet_end = netaddr.IPAddress(cidr.broadcast - 1)
+    subnet_end = netaddr.IPAddress(cidr.broadcast - 2)
 
     # 根据掩码位和 IP 范围大小计算 DHCP 可用 IP 地址
     dhcp_start = subnet_start
@@ -104,11 +105,15 @@ def delete_route_network(conn):
     """删除路由、网络和子网"""
     print('正在删除路由...')
     routers = list(conn.network.routers(project_id=conn.session.get_project_id()))
-    for port in conn.network.ports(device_id=routers[0].id):
-        if port.network_id == '9107647b-c57b-475a-832a-79d8306089cb':
-            continue
-        conn.network.remove_interface_from_router(routers[0].id, port_id=port.id)
-    conn.network.delete_router(routers[0])
+    if len(routers) == 0:
+        print('路由不存在！')
+    else:
+        for port in conn.network.ports(device_id=routers[0].id):
+            if port.network_id == '9107647b-c57b-475a-832a-79d8306089cb':
+                continue
+            # TODO: 端口可能占用无法删除
+            conn.network.remove_interface_from_router(routers[0].id, port_id=port.id)
+        conn.network.delete_router(routers[0])
     print('正在删除子网...')
     subnets = conn.network.subnets(project_id=conn.session.get_project_id())
     for subnet in subnets:
@@ -196,7 +201,7 @@ def create_networks(connection, vm_config):
             network_name = f"auto-created-network-{cidr_prefix}"
             network = connection.network.create_network(name=network_name)
             # 计算网关ip
-            gw_ip = str(netaddr.IPAddress(vm_ip.first + 1))
+            gw_ip = str(netaddr.IPAddress(vm_ip.first + 254))
 
 
             subnet = create_subnet(connection, network, cidr_prefix, gw_ip)
@@ -245,6 +250,7 @@ def create_secgroup(connection, vm_onfig):
         sec_group = connection.network.create_security_group(name='os_compose',
             description='auto created security group')
         #sec_rule['security_group_id'] = sec_group.id
+        # allow all tcp port
         connection.network.create_security_group_rule(
             description=sec_rule['description'],
             security_group_id=sec_group.id,
@@ -254,13 +260,34 @@ def create_secgroup(connection, vm_onfig):
             port_range_min=sec_rule['port_range_min'],
             remote_ip_prefix=sec_rule['remote_ip_prefix'],
             )
+        # allow all icmp 
+        connection.network.create_security_group_rule(
+            description=sec_rule['description'],
+            security_group_id=sec_group.id,
+            direction=sec_rule['direction'],
+            protocol='icmp',
+            port_range_max=sec_rule['port_range_max'],
+            port_range_min=sec_rule['port_range_min'],
+            remote_ip_prefix=sec_rule['remote_ip_prefix'],
+            )
+        
+        # all all udp port
+        connection.network.create_security_group_rule(
+            description=sec_rule['description'],
+            security_group_id=sec_group.id,
+            direction=sec_rule['direction'],
+            protocol='udp',
+            port_range_max=sec_rule['port_range_max'],
+            port_range_min=sec_rule['port_range_min'],
+            remote_ip_prefix=sec_rule['remote_ip_prefix'],
+            )
     vm_onfig.sec_group.append(sec_group)
     return sec_group
 
 
-def up():
+def up(filename='vm-config.yaml'):
     """读取 YAML 配置文件并创建 VM"""
-    config = Config()
+    config = Config(filename)
     project_name = config.project_name
     project_description = config.project_description
     vm_list = config.parse_vm()
@@ -316,9 +343,9 @@ def wait_and_print(connection, vm_list):
             print(f'{vm_config.server.name} 等待超时! ')
             continue
 
-def down():
+def down(filename='vm-config.yaml'):
     """根据YAML配置文件清理项目"""
-    config = Config()
+    config = Config(filename)
     project_name = config.project_name
     vm_list = config.parse_vm()
 
@@ -334,11 +361,29 @@ def down():
     delete_project(admin_connection, project)
     print(f"项目 '{project_name}' 清理完成。")
 
+def Usage():
+    print(
+"""
+需要命令行参数！
+Usage:
+    os_compose: <action> [-c/--config config file]
+        action: up/down 创建或删除openstack 项目
+        -c/--config yaml配置文件路径
+"""
+    )
+
 if __name__ == '__main__':
-    if sys.argv[1] == 'up':
-        up()
-    elif sys.argv[1] == 'down':
-        down()
+    if len(sys.argv) < 2:
+        Usage()
+        exit()
+    parser = argparse.ArgumentParser(description='os_compose')
+    parser.add_argument('action', type=str, help='要执行的动作：up/down')
+    parser.add_argument('-c', '--config', type=str, help='配置文件路径')
+    args = parser.parse_args()
+    if args.action == 'up':
+        up(args.config)
+    elif args.action == 'down':
+        down(args.config)
     else:
         print('无效参数，请重试')
     

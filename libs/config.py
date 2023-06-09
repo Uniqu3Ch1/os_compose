@@ -5,7 +5,7 @@ import yaml
 from libs.vm import VM
 
 class Config:
-    def __init__(self, filename='vm-config.yaml') -> None:
+    def __init__(self, filename) -> None:
         """解析YAML配置文件"""
         try:
             with open(filename, "r", encoding="utf8") as yaml_config:
