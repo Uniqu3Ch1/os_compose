@@ -341,7 +341,20 @@ def wait_and_print(connection, vm_list):
                 print(f"|{server.name}\t|\t{ip_list}\t|\t{server.admin_password}|")
         except openstack.exceptions.ResourceTimeout: # type: ignore
             print(f'{vm_config.server.name} 等待超时! ')
+            if hasattr(vm_config, 'have_float_ip'):
+                floatip = add_float_ip(connection, server, vm_config.float_ip_bind)
+                ip_address = server.addresses
+                vm_config.float_ip = floatip.floating_ip_address
+                ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
+                print(f"|{server.name}\t|\t{ip_list}:{vm_config.float_ip}\t|\t{server.admin_password}|")
+            else:
+                ip_address = server.addresses
+                ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
+                print(f"|{server.name}\t|\t{ip_list}\t|\t{server.admin_password}|")
             continue
+        except openstack.exceptions.ResourceFailure as e:
+            print(f'{vm_config.server.name} 创建失败! {e}')
+            # TODO: 失败清理
 
 def down(filename='vm-config.yaml'):
     """根据YAML配置文件清理项目"""
