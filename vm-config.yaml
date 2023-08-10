@@ -13,8 +13,8 @@ project:
     image: YJ-kali-linux-2020.1-live-amd64
     flavor: 2m4g
     ip_address:
-    - 172.26.2.35/24
-    float_ip: 172.26.2.35
+    - 172.26.4.35/24
+    float_ip: 172.26.4.35
   - name: vm-2
     image: YJ-Struts2-052-RCE
     flavor: 2m4g80

@@ -23,7 +23,7 @@ auth_args = {
 # 定义创建 VM 的函数
 def create_vm(conn, vm_cfg, networks):
     """根据传入的name、image、flavor、subnet_id、ip地址创建VM"""
-    print('正在创建虚拟机...')
+    print('正在创建虚拟机...', end='')
     try:
         # 获取镜像和配额对象
         image_obj = conn.compute.find_image(vm_cfg.image)
@@ -38,9 +38,10 @@ def create_vm(conn, vm_cfg, networks):
             #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
             security_groups=[{'name': vm_cfg.sec_group[0].name}]
         )
+        print('OK')
     except openstack.exceptions.BadRequestException as err: # type: ignore
         #print('ip 地址重复, 尝试分配新ip...')
-        print(err)
+        print(f'WARN\n{err}')
         # 获取镜像和配额对象
         image_obj = conn.compute.find_image(vm_cfg.image)
         flavor_obj = conn.compute.find_flavor(vm_cfg.flavor)
@@ -57,8 +58,9 @@ def create_vm(conn, vm_cfg, networks):
             #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
             security_groups=[{'name': vm_cfg.sec_group[0].name}]
         )
+        print('正在创建虚拟机...OK')
     except openstack.exceptions.ResourceTimeout: # type: ignore
-        print("Created VM waiting timeout")
+        print(f"ERROR Created VM waiting timeout")
 
     return server
 
@@ -90,14 +92,24 @@ def create_subnet(conn, network, cidr_prefix, gw_ip):
 
     # 创建 Subnet
     subnet_name = f"auto-created-subnet-{cidr_prefix}"
-    subnet = conn.network.create_subnet(
-        name=subnet_name,
-        ip_version=4,
-        network_id=network.id,
-        cidr=cidr_prefix,
-        gateway_ip=gw_ip,
-        allocation_pools=[{"start": str(dhcp_start), "end": str(dhcp_end)}],
-    )
+    # 是否指定网关
+    if gw_ip == '':
+        subnet = conn.network.create_subnet(
+            name=subnet_name,
+            ip_version=4,
+            network_id=network.id,
+            cidr=cidr_prefix,
+            allocation_pools=[{"start": str(dhcp_start), "end": str(dhcp_end)}],
+        )
+    else:
+        subnet = conn.network.create_subnet(
+            name=subnet_name,
+            ip_version=4,
+            network_id=network.id,
+            cidr=cidr_prefix,
+            gateway_ip=gw_ip,
+            allocation_pools=[{"start": str(dhcp_start), "end": str(dhcp_end)}],
+        )
 
     return subnet
 
@@ -114,16 +126,17 @@ def delete_route_network(conn):
             # TODO: 端口可能占用无法删除
             conn.network.remove_interface_from_router(routers[0].id, port_id=port.id)
         conn.network.delete_router(routers[0])
-    print('正在删除子网...')
+    print('正在删除子网...',end='')
     subnets = conn.network.subnets(project_id=conn.session.get_project_id())
     for subnet in subnets:
         conn.network.delete_subnet(subnet.id)
-    print('子网删除完成...\n正在删除网络...')
+    print('OK')
+    print('正在删除网络...',end='')
 
     networks = conn.network.networks(project_id=conn.session.get_project_id())
     for network in networks:
         conn.network.delete_network(network.id)
-    print('网络删除完成! ')
+    print('OK')
 
 
 def find_net(connection, cidr):
@@ -134,7 +147,7 @@ def find_net(connection, cidr):
         if _subnet.cidr == cidr:
             network = connection.network.find_network(_subnet.network_id)
             return network, _subnet
-    raise openstack.exceptions.NotFoundException # type: ignore
+    return None, None
 
 def create_router(connection, subnets, external_network_name=None):
     """创建路由，连接指定子网"""
@@ -148,25 +161,30 @@ def create_router(connection, subnets, external_network_name=None):
     else:
         router = connection.network.create_router(name=router_name)
     print(f"路由 {router.name} 创建完成, ID为: '{router.id}'")
-    for subnet in subnets:
-        connection.network.add_interface_to_router(router, subnet_id=subnet.id)
-        print(f"连接子网 {subnet.name} 到路由 {router.name} ")
+    try:
+        for subnet in subnets:
+            connection.network.add_interface_to_router(router, subnet_id=subnet.id)
+            print(f"连接子网 {subnet.name} 到路由 {router.name} ")
+    except openstack.exceptions.BadRequestException as e:
+        print(f'[WARNING] {e}')
+        pass
     return router
 
 
 
 def create_project(connection, project_name=None, description=None):
     """创建指定project, 并将当前用户加入project"""
-    print('正在创建项目...')
+    print('正在创建项目...', end='')
     try:
         project = connection.identity.create_project(name=project_name, description=description)
         admin = connection.identity.find_user(name_or_id=auth_args["username"])
         admin_role = connection.identity.find_role('admin')
         # 将当前用户加入新创建的project
         connection.identity.assign_project_role_to_user(project, admin, admin_role)
+        print('OK')
 
     except openstack.exceptions.ConflictException:
-        print(f"{project_name} 已存在! 跳过创建...")
+        print(f"WARN\n{project_name} 已存在! 跳过创建...")
         project = connection.identity.find_project(name_or_id=project_name)
 
 
@@ -185,7 +203,7 @@ def delete_project(connection, project):
 
 def create_networks(connection, vm_config):
     """根据网络配置创建网络及子网,并返回openstack网络配置"""
-    print('正在创建网络...')
+    print('正在创建网络...', end='')
     subnets = {}
     networks = []
     # 遍历配置文件中的net列表，获取 IP 地址和掩码
@@ -194,22 +212,26 @@ def create_networks(connection, vm_config):
         vm_config.cidr = cidr_prefix
 
         # 检查子网是否存在，如果不存在则创建
-        try:
-            network, subnet = find_net(connection, cidr_prefix)
 
-        except openstack.exceptions.NotFoundException: # type: ignore
+        network, subnet = find_net(connection, cidr_prefix)
+
+        # 如果没有找到网络和子网，就尝试创建
+        if network == None and subnet == None:
             network_name = f"auto-created-network-{cidr_prefix}"
             network = connection.network.create_network(name=network_name)
             # 计算网关ip
             gw_ip = str(netaddr.IPAddress(vm_ip.first + 254))
+            if vm_config.have_float_ip == 'yes' and vm_ip.ip == netaddr.IPNetwork(vm_config.float_ip_bind).ip:
+                subnet = create_subnet(connection, network, cidr_prefix, gw_ip)
+            else:
+                subnet = create_subnet(connection, network, cidr_prefix, '')
 
-
-            subnet = create_subnet(connection, network, cidr_prefix, gw_ip)
         vm_config.networks.append(network)
         # 将子网对象添加到 subnets 列表中
         subnets[str(vm_ip.ip)] = subnet
         networks.append({"uuid": subnet.network_id, "fixed_ip": vm_ip.ip})
-
+        
+    print('OK')
     return networks, subnets
 
 def add_float_ip(connection, server, ipaddr):
@@ -329,7 +351,7 @@ def wait_and_print(connection, vm_list):
     for vm_config in vm_list:
         try:
             server = connection.compute.wait_for_server(vm_config.server)
-            if hasattr(vm_config, 'have_float_ip'):
+            if vm_config.have_float_ip == 'yes':
                 floatip = add_float_ip(connection, server, vm_config.float_ip_bind)
                 ip_address = server.addresses
                 vm_config.float_ip = floatip.floating_ip_address
@@ -339,9 +361,10 @@ def wait_and_print(connection, vm_list):
                 ip_address = server.addresses
                 ip_list = [ip_address[net][0]['addr'] for net in ip_address.keys()]
                 print(f"|{server.name}\t|\t{ip_list}\t|\t{server.admin_password}|")
+
         except openstack.exceptions.ResourceTimeout: # type: ignore
             print(f'{vm_config.server.name} 等待超时! ')
-            if hasattr(vm_config, 'have_float_ip'):
+            if vm_config.have_float_ip == 'yes':
                 floatip = add_float_ip(connection, server, vm_config.float_ip_bind)
                 ip_address = server.addresses
                 vm_config.float_ip = floatip.floating_ip_address
