@@ -13,6 +13,7 @@ class VM:
         self.name = cfg['name']
         self.image = cfg['image']
         self.flavor = cfg['flavor']
+        self.have_float_ip = 'no'
         #self.allow_ports = cfg['ports']
         if 'ip_address' in cfg.keys():
             for ip in cfg['ip_address']:
