@@ -11,12 +11,12 @@ from libs.config import Config
 
 # 配置 OpenStack 连接信息
 auth_args = {
-    "auth_url": os.environ["OS_AUTH_URL"],
-    "project_name": os.environ["OS_PROJECT_NAME"],
+    "auth_url":          os.environ["OS_AUTH_URL"],
+    "project_name":      os.environ["OS_PROJECT_NAME"],
     "project_domain_id": os.environ["OS_PROJECT_ID"],
-    "username": os.environ["OS_USERNAME"],
-    "user_domain_name": os.environ["OS_USER_DOMAIN_NAME"],
-    "password": os.environ["OS_PASSWORD"],
+    "username":          os.environ["OS_USERNAME"],
+    "user_domain_name":  os.environ["OS_USER_DOMAIN_NAME"],
+    "password":          os.environ["OS_PASSWORD"],
 }
 
 
@@ -115,7 +115,7 @@ def create_subnet(conn, network, cidr_prefix, gw_ip):
 
 def delete_route_network(conn):
     """删除路由、网络和子网"""
-    print('正在删除路由...')
+    print('正在删除路由...', end='')
     routers = list(conn.network.routers(project_id=conn.session.get_project_id()))
     if len(routers) == 0:
         print('路由不存在！')
@@ -126,6 +126,7 @@ def delete_route_network(conn):
             # TODO: 端口可能占用无法删除
             conn.network.remove_interface_from_router(routers[0].id, port_id=port.id)
         conn.network.delete_router(routers[0])
+        print('OK')
     print('正在删除子网...',end='')
     subnets = conn.network.subnets(project_id=conn.session.get_project_id())
     for subnet in subnets:
@@ -245,6 +246,15 @@ def add_float_ip(connection, server, ipaddr):
         if ip_dict['ip_address'] == ipaddr:
             connection.network.update_ip(floating_ip, port_id=port.id)
     return floating_ip
+
+def delete_float_ip(connection):
+    print('正在释放浮动IP...', end='')
+    float_ips = list(connection.network.ips())
+    for float_ip in float_ips:
+        if float_ip.project_id == connection.session.get_project_id():
+            connection.network.delete_ip(float_ip)
+    print('OK')
+        
 
 def create_secgroup(connection, vm_onfig):
     """以默认配置创建安全组, 入站放通所有tcp端口"""
@@ -392,7 +402,7 @@ def down(filename='vm-config.yaml'):
     new_conn = openstack.connect(**auth_args)
     for vm_cfg in vm_list:
         delete_vm(new_conn, vm_cfg)
-
+    delete_float_ip(new_conn)
     delete_route_network(new_conn)
     delete_project(admin_connection, project)
     print(f"项目 '{project_name}' 清理完成。")
