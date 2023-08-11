@@ -7,12 +7,17 @@ project:
   name: test_project
   description: 测试项目
   vm:
+  # name为VM实例的名字
   - name: vm-1
+  # image为启动VM的镜像名
     image: tests-WEB2-Weblogic_RCE
+    # flavor为VM要使用的配额名
     flavor: 2m4g80
+    # IP地址指定要绑定到VM实例的ip地址列表，可以指定多个，必须是CIDR形式
     ip_address: 
     - 172.26.4.54/24
     - 172.26.3.27/24
+    # 浮动IP要指定需要绑定浮动IP的网卡ip, 比如下面要在172.16.4.54的网卡上绑定浮动IP
     float_ip: 172.26.4.54
   - name: kali-attacker
     image: YJ-kali-linux-2020.1-live-amd64
@@ -43,10 +48,10 @@ project:
 
 构建项目
 ```
-python os_compose.py up
+python os_compose.py up -c <yaml配置文件>
 ```
 
 清理项目
 ```
-python os_compose.py down
+python os_compose.py down -c <yaml配置文件>
 ```
