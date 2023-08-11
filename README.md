@@ -1,6 +1,11 @@
 # openstack compose
-尝试以类似docker-compose的方式管理openstack VMs。
-# 使用示例
+尝试以类似docker-compose的方式管理openstack VMs。  
+目前只支持通过yaml配置文件一键构建项目和清理项目。  
+
+> 需要通过环境变量提供openstack集群连接信息。
+
+欢迎试用！
+## 使用示例
 配置文件示例：
 ```
 project:
