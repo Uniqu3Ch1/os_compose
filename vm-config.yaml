@@ -2,35 +2,28 @@ project:
   name: test_project
   description: 测试项目
   vm:
-  - name: vm-1
-    image: tests-WEB2-Weblogic_RCE
+  - name: dc
+    image: YJ-cn_windows_server_2012_r2_x64_dvd_CQV111
     flavor: 2m4g80
     ip_address: 
     - 172.26.4.54/24
     - 172.26.3.27/24
     float_ip: 172.26.4.54
-  - name: kali-attacker
-    image: YJ-kali-linux-2020.1-live-amd64
-    flavor: 2m4g
-    ip_address:
-    - 172.26.4.35/24
-    float_ip: 172.26.4.35
-  - name: vm-2
-    image: YJ-Struts2-052-RCE
+    config_driver: True
+  - name: user1
+    image: YJ-RuoYi_4.3.0-Centos7
     flavor: 2m4g80
     ip_address:
-    - 172.26.3.75/24
-  - name: vm-3
-    image: YJ-ThinkCMF-FileInclude
-    flavor: 2m4g80
-    ip_address: 
-    - 172.26.4.22/24
-  - name: vm-4
-    image: YJ-Thinkphp5.1~5.2_RCE
+    - 172.26.3.50/24
+    - 172.26.5.45/24
+    config_driver: True
+  - name: user2
+    image: YJ-Ubuntu-20.04-base-cloud
     flavor: 2m4g80
     ip_address:
-    - 172.26.3.23/24
-    - 172.26.2.182/24
+    - 172.26.5.100/24
+    config_driver: True
+
 
 
       

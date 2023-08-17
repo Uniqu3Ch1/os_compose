@@ -7,6 +7,7 @@ import netaddr
 import argparse
 import openstack
 from libs.config import Config
+import base64
 
 
 # 配置 OpenStack 连接信息
@@ -30,14 +31,24 @@ def create_vm(conn, vm_cfg, networks):
         flavor_obj = conn.compute.find_flavor(vm_cfg.flavor)
 
         # 创建 VM
-        server = conn.compute.create_server(
-            name=vm_cfg.name,
-            image_id=image_obj.id,
-            flavor_id=flavor_obj.id,
-            networks=networks,
-            #networks=[{"uuid": net_id, "fixed_ip": ip_address}],
-            security_groups=[{'name': vm_cfg.sec_group[0].name}]
-        )
+        if vm_cfg.config_driver == True:
+            server = conn.compute.create_server(
+                name=vm_cfg.name,
+                image_id=image_obj.id,
+                flavor_id=flavor_obj.id,
+                networks=networks,
+                security_groups=[{'name': vm_cfg.sec_group[0].name}],
+                config_drive=vm_cfg.config_driver,
+                user_data = base64.b64encode(vm_cfg.script.encode('utf8')).decode() #TODO: 脚本大小不能超过16kb
+            )
+        else:
+            server = conn.compute.create_server(
+                name=vm_cfg.name,
+                image_id=image_obj.id,
+                flavor_id=flavor_obj.id,
+                networks=networks,
+                security_groups=[{'name': vm_cfg.sec_group[0].name}]
+            )
         print('OK')
     except openstack.exceptions.BadRequestException as err: # type: ignore
         #print('ip 地址重复, 尝试分配新ip...')
@@ -99,6 +110,7 @@ def create_subnet(conn, network, cidr_prefix, gw_ip):
             ip_version=4,
             network_id=network.id,
             cidr=cidr_prefix,
+            gateway_ip=None,
             allocation_pools=[{"start": str(dhcp_start), "end": str(dhcp_end)}],
         )
     else:
@@ -141,7 +153,7 @@ def delete_route_network(conn):
 
 
 def find_net(connection, cidr):
-    """根据传入的cidr在当前项目中查找subnet, 如果找不到就抛出NotFoundException"""
+    """根据传入的cidr在当前项目中查找subnet, 如果找不到就返回None"""
     subnets = connection.network.subnets(project_id=connection.session.get_project_id())
     subnet_list = list(subnets)
     for _subnet in subnet_list:
@@ -303,7 +315,7 @@ def create_secgroup(connection, vm_onfig):
             remote_ip_prefix=sec_rule['remote_ip_prefix'],
             )
         
-        # all all udp port
+        # allow all udp port
         connection.network.create_security_group_rule(
             description=sec_rule['description'],
             security_group_id=sec_group.id,
@@ -342,6 +354,7 @@ def up(filename='vm-config.yaml'):
             vm_cfg=vm_config,
             networks=networks
         )
+        #connection.compute.set_server_metadata(server,)
         vm_config.update(server)
         if hasattr(vm_config, 'float_ip_bind'):
             interoperable.append(subnets[vm_config.float_ip_bind])
